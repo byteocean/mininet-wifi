@@ -107,7 +107,7 @@ from math import ceil
 
 from mininet.cli import CLI
 from mininet.log import info, error, debug, output, warn
-from mininet.node import (Node, Host, Station, Car, OVSKernelSwitch, DefaultController,
+from mininet.node import (Node, Host, Station, Car, OVSKernelSwitch, UserSwitch, OVSAP, UserAP, DefaultController,
                            Controller, AccessPoint)
 from mininet.nodelib import NAT
 from mininet.link import Link, Intf, TCLinkWireless, Association
@@ -386,9 +386,15 @@ class Mininet(object):
                      }
 
         defaults.update(params)
+        
         if not cls:
             cls = self.switch
+        if cls == OVSKernelSwitch:
+            cls = OVSAP
+        elif cls == UserSwitch:
+            cls = UserAP    
         ap = cls(name, **defaults)
+
         if not self.inNamespace and self.listenPort:
             self.listenPort += 1
         
@@ -1035,6 +1041,19 @@ class Mininet(object):
         "Control net config hook: override in subclass"
         raise Exception('configureControlNetwork: '
                          'should be overriden in subclass', self)
+        
+    @classmethod     
+    def updateParams(self, sta, ap, wlan):
+        """ 
+        Updates values for frequency and channel
+        
+        :param sta: station
+        :param ap: access point
+        :param wlan: wlan ID
+        """
+
+        sta.params['frequency'][wlan] = setChannelParams.frequency(ap, 0)
+        sta.params['channel'][wlan] = ap.params['channel'][0]
 
     def getAPsInRange(self, sta):
         """ 
@@ -1047,11 +1066,21 @@ class Mininet(object):
             dist = setChannelParams.getDistance(sta, ap)
             if dist < ap.params['range']:
                 for wlan in range(0, len(sta.params['wlan'])):
-                    rssi.append(setChannelParams.setRSSI(sta, ap, wlan, dist))
+                    if sta.params['rssi'][wlan] == 0:
+                        self.updateParams(sta, ap, wlan)
+                    rssi_ = setChannelParams.setRSSI(sta, ap, wlan, dist)
+                    sta.params['rssi'][wlan] = rssi_
+                    snr_ = setChannelParams.setSNR(sta, wlan)
+                    sta.params['snr'][wlan] = snr_
+                    rssi.append(rssi_)
+                    #if ap == sta.params['associatedTo'][wlan]:
+                    ap.params['associatedStations'][sta] = sta.params['rssi'][wlan]
                 sta.params['apsInRange'][ap] = rssi
+                ap.params['stationsInRange'][sta] = rssi
             else:
                 if ap in sta.params['apsInRange']:
                     sta.params['apsInRange'].pop(ap, None)
+                    ap.params['stationsInRange'].pop(sta, None)
         
     def autoAssociation(self):
         """This is useful to make the users' life easier"""
